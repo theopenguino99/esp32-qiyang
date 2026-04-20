@@ -88,6 +88,8 @@ void setup() {
 
   NimBLEAdvertising* pAdv = NimBLEDevice::getAdvertising();
   pAdv->addServiceUUID(NUS_SERVICE_UUID);
+  pAdv->setMinInterval(0x20);  // 32 * 0.625ms = 20ms
+  pAdv->setMaxInterval(0x40);  // 64 * 0.625ms = 40ms
   pAdv->start();
 
   Serial.println("Advertising as 'ESP32-C6' — waiting for connection...");
@@ -96,10 +98,10 @@ void setup() {
 unsigned long lastSampleTime = 0;
 
 void updateLEDFromWeight(float weightKg) {
-  // Map weight from 0-20kg to LED color gradient (Blue to Red)
+  // Map weight from 0-1kg to LED color gradient (Blue to Red)
   // 0kg (min) = Blue (0, 0, 255)
-  // 20kg (max) = Red (255, 0, 0)
-  float ratio = constrain(weightKg / 20.0, 0.0, 1.0);
+  // 1kg (max) = Red (255, 0, 0)
+  float ratio = constrain(weightKg / 1.0, 0.0, 1.0);
   
   uint8_t red = (uint8_t)(ratio * 255);
   uint8_t blue = (uint8_t)((1.0 - ratio) * 255);
@@ -120,18 +122,27 @@ void loop() {
     lastSampleTime = millis();
 
     // Get weight in kg
-    float weightKg = scale.get_units(10) / 1000.0;  // Average 10 readings
+    float weightKg = scale.get_units(1) / 1000.0;  // Single reading for faster response
     
-    // Update LED based on weight
-    updateLEDFromWeight(weightKg);
-
-    // Send weight to iPad if connected
     if (deviceConnected) {
-      String data = String(weightKg, 2) + " kg\n";  // 2 decimal places
+      // Update LED based on weight (blue to red gradient)
+      updateLEDFromWeight(weightKg);
+
+      // Send weight to webapp
+      String data = String(weightKg, 2) + " kg\n";
       pTxChar->setValue(data.c_str());
       pTxChar->notify();
       Serial.print("[TX] ");
       Serial.print(data);
+    } else {
+      // Flash red LED when disconnected
+      uint8_t flash = (millis() / 25) % 2;  // Toggle every 25ms
+      if (flash) {
+        led.setPixelColor(0, led.Color(255, 0, 0));  // Red
+      } else {
+        led.setPixelColor(0, led.Color(0, 0, 0));    // Off
+      }
+      led.show();
     }
   }
 }
