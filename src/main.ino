@@ -88,6 +88,8 @@ void setup() {
 
   NimBLEAdvertising* pAdv = NimBLEDevice::getAdvertising();
   pAdv->addServiceUUID(NUS_SERVICE_UUID);
+  pAdv->enableScanResponse(true);  // Send name in scan response (main packet is full with 128-bit UUID)
+  pAdv->setName("ESP32-C6");   // Explicitly include name so Chrome Web Bluetooth can filter it
   pAdv->setMinInterval(0x20);  // 32 * 0.625ms = 20ms
   pAdv->setMaxInterval(0x40);  // 64 * 0.625ms = 40ms
   pAdv->start();
