@@ -2,9 +2,19 @@
 #include <Adafruit_NeoPixel.h>
 #include <NimBLEDevice.h>
 #include <HX711.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SH110X.h>
 
 #define LED_PIN  8
 #define NUM_LEDS 1
+
+// SH1106 OLED (1.3")
+#define OLED_ADDR 0x3C
+#define OLED_WIDTH 128
+#define OLED_HEIGHT 64
+#define OLED_RESET -1
+#define OLED_UPDATE_MS 50
 
 // HX711 Load Cell pins
 #define HX711_DT_PIN  11  // Data pin
@@ -18,10 +28,16 @@
 
 
 Adafruit_NeoPixel led(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
+Adafruit_SH1106G display(OLED_WIDTH, OLED_HEIGHT, &Wire, OLED_RESET);
 HX711 scale;
 NimBLECharacteristic* pTxChar = nullptr;
 bool deviceConnected = false;
 float calibrationFactor = 430.0;  // Adjust this based on your load cell calibration
+
+float history[OLED_WIDTH];
+uint16_t historyIndex = 0;
+bool historyFull = false;
+unsigned long lastDisplayUpdate = 0;
 
 class ServerCallbacks : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo) override {
@@ -51,11 +67,76 @@ class RxCallbacks : public NimBLECharacteristicCallbacks {
   }
 };
 
+void pushHistory(float value) {
+  history[historyIndex] = value;
+  historyIndex = (historyIndex + 1) % OLED_WIDTH;
+  if (historyIndex == 0) historyFull = true;
+}
+
+float getHistoryValue(int i, int count) {
+  if (!historyFull) return history[i];
+  int idx = (historyIndex + i) % OLED_WIDTH;
+  return history[idx];
+}
+
+void updateDisplay(float weightKg) {
+  static float lastWeight = NAN;
+  if (weightKg == lastWeight) return; // update only when the reading changes
+  if (millis() - lastDisplayUpdate < OLED_UPDATE_MS) return;
+  lastDisplayUpdate = millis();
+  lastWeight = weightKg;
+
+  pushHistory(weightKg);
+
+  int count = historyFull ? OLED_WIDTH : historyIndex;
+  float minVal = weightKg;
+  float maxVal = weightKg;
+  for (int i = 0; i < count; i++) {
+    float v = getHistoryValue(i, count);
+    if (v < minVal) minVal = v;
+    if (v > maxVal) maxVal = v;
+  }
+  if (maxVal - minVal < 0.05f) {
+    maxVal = minVal + 0.05f;
+  }
+
+  display.clearDisplay();
+  display.setTextSize(2);
+  display.setTextColor(SH110X_WHITE);
+  display.setCursor(0, 0);
+  display.print(weightKg, 1);
+  display.print("kg");
+
+  const int textHeight = 16;
+  const int graphTop = textHeight + 2;
+  const int graphBottom = OLED_HEIGHT - 1;
+  const int graphHeight = graphBottom - graphTop;
+
+  for (int i = 1; i < count; i++) {
+    float v0 = getHistoryValue(i - 1, count);
+    float v1 = getHistoryValue(i, count);
+    int x0 = i - 1;
+    int x1 = i;
+    int y0 = graphBottom - (int)(((v0 - minVal) / (maxVal - minVal)) * graphHeight);
+    int y1 = graphBottom - (int)(((v1 - minVal) / (maxVal - minVal)) * graphHeight);
+    display.drawLine(x0, y0, x1, y1, SH110X_WHITE);
+  }
+
+  display.display();
+}
+
 void setup() {
   led.begin();
   led.setBrightness(50);
   led.setPixelColor(0, led.Color(0, 0, 0));
   led.show();
+
+  Wire.begin();
+  if (!display.begin(OLED_ADDR, true)) {
+    Serial.println("OLED init failed");
+  }
+  display.clearDisplay();
+  display.display();
 
   Serial.begin(115200);
   unsigned long start = millis();
@@ -106,6 +187,8 @@ void loop() {
 
   // Get weight in kg
   float weightKg = scale.get_units(1) / 1000.0;
+
+  updateDisplay(weightKg);
 
   // Only transmit when the reading changes
   static float lastSentWeight = NAN;
