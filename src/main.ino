@@ -15,6 +15,8 @@
 #define OLED_HEIGHT 64
 #define OLED_RESET -1
 #define OLED_UPDATE_MS 50
+#define OLED_SDA 6
+#define OLED_SCL 7
 
 // HX711 Load Cell pins
 #define HX711_DT_PIN  11  // Data pin
@@ -101,13 +103,13 @@ void updateDisplay(float weightKg) {
   }
 
   display.clearDisplay();
-  display.setTextSize(2);
+  display.setTextSize(3);
   display.setTextColor(SH110X_WHITE);
   display.setCursor(0, 0);
-  display.print(weightKg, 1);
+  display.print(weightKg, 2);
   display.print("kg");
 
-  const int textHeight = 16;
+  const int textHeight = 25;
   const int graphTop = textHeight + 2;
   const int graphBottom = OLED_HEIGHT - 1;
   const int graphHeight = graphBottom - graphTop;
@@ -131,17 +133,27 @@ void setup() {
   led.setPixelColor(0, led.Color(0, 0, 0));
   led.show();
 
-  Wire.begin();
+  Serial.begin(115200);
+  unsigned long start = millis();
+  while (!Serial && millis() - start < 3000);
+  Serial.println("ESP32-C6 Load Cell + BLE UART Test");
+
+  Wire.begin(OLED_SDA, OLED_SCL);
+  Serial.println("I2C scan:");
+  for (uint8_t addr = 1; addr < 127; addr++) {
+    Wire.beginTransmission(addr);
+    if (Wire.endTransmission() == 0) {
+      Serial.print("  Found 0x");
+      if (addr < 16) Serial.print("0");
+      Serial.println(addr, HEX);
+    }
+  }
+
   if (!display.begin(OLED_ADDR, true)) {
     Serial.println("OLED init failed");
   }
   display.clearDisplay();
   display.display();
-
-  Serial.begin(115200);
-  unsigned long start = millis();
-  while (!Serial && millis() - start < 3000);
-  Serial.println("ESP32-C6 Load Cell + BLE UART Test");
 
   // Initialize HX711
   scale.begin(HX711_DT_PIN, HX711_SCK_PIN);
