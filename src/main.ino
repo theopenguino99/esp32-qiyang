@@ -15,7 +15,7 @@
 #define NUS_RX_UUID      "6E400002-B5A3-F393-E0A9-E50E24DCCA9E" // phone -> ESP32
 #define NUS_TX_UUID      "6E400003-B5A3-F393-E0A9-E50E24DCCA9E" // ESP32 -> phone
 
-#define MAX_WEIGHT 20000.0  // 20kg in grams
+
 
 Adafruit_NeoPixel led(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
 HX711 scale;
@@ -97,21 +97,6 @@ void setup() {
   Serial.println("Advertising as 'ESP32-C6' — waiting for connection...");
 }
 
-unsigned long lastSampleTime = 0;
-
-void updateLEDFromWeight(float weightKg) {
-  // Map weight from 0-1kg to LED color gradient (Blue to Red)
-  // 0kg (min) = Blue (0, 0, 255)
-  // 1kg (max) = Red (255, 0, 0)
-  float ratio = constrain(weightKg / 1.0, 0.0, 1.0);
-  
-  uint8_t red = (uint8_t)(ratio * 255);
-  uint8_t blue = (uint8_t)((1.0 - ratio) * 255);
-  
-  led.setPixelColor(0, led.Color(red, 0, blue));
-  led.show();
-}
-
 void loop() {
   if (!scale.is_ready()) {
     Serial.println("HX711 not ready");
@@ -119,32 +104,32 @@ void loop() {
     return;
   }
 
-  // Read weight at ~80Hz (12.5ms interval)
-  if (millis() - lastSampleTime >= 12) {
-    lastSampleTime = millis();
+  // Get weight in kg
+  float weightKg = scale.get_units(1) / 1000.0;
 
-    // Get weight in kg
-    float weightKg = scale.get_units(1) / 1000.0;  // Single reading for faster response
-    
-    if (deviceConnected) {
-      // Update LED based on weight (blue to red gradient)
-      updateLEDFromWeight(weightKg);
+  // Only transmit when the reading changes
+  static float lastSentWeight = NAN;
+  bool readingChanged = isnan(lastSentWeight) || weightKg != lastSentWeight;
 
-      // Send weight to webapp
-      String data = String(weightKg, 2) + " kg\n";
-      pTxChar->setValue(data.c_str());
-      pTxChar->notify();
-      Serial.print("[TX] ");
-      Serial.print(data);
+  if (deviceConnected && readingChanged) {
+    lastSentWeight = weightKg;
+
+    // Send weight to webapp
+    String data = String(weightKg, 2) + " kg\n";
+    pTxChar->setValue(data.c_str());
+    pTxChar->notify();
+    Serial.print("[TX] ");
+    Serial.print(data);
+  }
+
+  if (!deviceConnected) {
+    // Flash red LED when disconnected
+    uint8_t flash = (millis() / 25) % 2;  // Toggle every 25ms
+    if (flash) {
+      led.setPixelColor(0, led.Color(255, 0, 0));  // Red
     } else {
-      // Flash red LED when disconnected
-      uint8_t flash = (millis() / 25) % 2;  // Toggle every 25ms
-      if (flash) {
-        led.setPixelColor(0, led.Color(255, 0, 0));  // Red
-      } else {
-        led.setPixelColor(0, led.Color(0, 0, 0));    // Off
-      }
-      led.show();
+      led.setPixelColor(0, led.Color(0, 0, 0));    // Off
     }
+    led.show();
   }
 }
