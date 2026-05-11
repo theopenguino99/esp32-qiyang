@@ -2,9 +2,14 @@
 #include <Adafruit_NeoPixel.h>
 #include <NimBLEDevice.h>
 #include <HX711.h>
+#include <Preferences.h>
+#include <limits.h>
 
 #define LED_PIN  8
 #define NUM_LEDS 1
+
+// Buzzer pin for calibration prompts
+#define BUZZER_PIN 9
 
 // HX711 Load Cell pins
 #define HX711_DT_PIN  11  // Data pin
@@ -19,9 +24,18 @@
 
 Adafruit_NeoPixel led(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
 HX711 scale;
+Preferences prefs;
 NimBLECharacteristic* pTxChar = nullptr;
 bool deviceConnected = false;
-float calibrationFactor = 430.0;  // Adjust this based on your load cell calibration
+float calOffset = 0.0f;
+float calScale = 1.0f;
+
+// Calibration settings
+const float CALIB_WEIGHT_KG = 8.0f;
+const int CALIB_SAMPLES = 10;
+const unsigned long CALIB_STABILIZE_MS = 2000;
+const unsigned long CALIB_STEP_DELAY_MS = 3000;
+const bool FORCE_CALIBRATION_ON_BOOT = false;
 
 class ServerCallbacks : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo) override {
@@ -51,7 +65,81 @@ class RxCallbacks : public NimBLECharacteristicCallbacks {
   }
 };
 
+void beepCount(int count) {
+  for (int i = 0; i < count; i++) {
+    tone(BUZZER_PIN, 2000);
+    delay(120);
+    noTone(BUZZER_PIN);
+    delay(120);
+  }
+}
+
+float readRawAverage(int samples) {
+  long sum = 0;
+  for (int i = 0; i < samples; i++) {
+    while (!scale.is_ready()) {
+      delay(10);
+    }
+    sum += scale.read();
+  }
+  return (float)sum / (float)samples;
+}
+
+bool loadCalibration() {
+  prefs.begin("hx711", true);
+  bool hasOffset = prefs.isKey("offset");
+  bool hasScale = prefs.isKey("scale");
+  if (hasOffset && hasScale) {
+    calOffset = prefs.getFloat("offset", 0.0f);
+    calScale = prefs.getFloat("scale", 1.0f);
+  }
+  prefs.end();
+  return hasOffset && hasScale;
+}
+
+void saveCalibration() {
+  prefs.begin("hx711", false);
+  prefs.putFloat("offset", calOffset);
+  prefs.putFloat("scale", calScale);
+  prefs.end();
+}
+
+void runCalibration() {
+  Serial.println("Calibration start");
+
+  // Two beeps: remove weight
+  beepCount(2);
+  delay(CALIB_STEP_DELAY_MS);
+  calOffset = readRawAverage(CALIB_SAMPLES);
+  Serial.print("Offset raw: ");
+  Serial.println(calOffset, 2);
+
+  // One beep: add known weight
+  beepCount(1);
+  delay(CALIB_STEP_DELAY_MS);
+  float rawWithWeight = readRawAverage(CALIB_SAMPLES);
+  Serial.print("Raw with weight: ");
+  Serial.println(rawWithWeight, 2);
+
+  float delta = rawWithWeight - calOffset;
+  if (delta <= 0.0f) {
+    Serial.println("Calibration failed: invalid delta");
+    calScale = 1.0f;
+    return;
+  }
+
+  calScale = CALIB_WEIGHT_KG / delta;
+  saveCalibration();
+
+  // Three beeps: calibration done
+  beepCount(3);
+  Serial.print("Scale factor: ");
+  Serial.println(calScale, 6);
+}
+
 void setup() {
+  pinMode(BUZZER_PIN, OUTPUT);
+
   led.begin();
   led.setBrightness(50);
   led.setPixelColor(0, led.Color(0, 0, 0));
@@ -64,9 +152,12 @@ void setup() {
 
   // Initialize HX711
   scale.begin(HX711_DT_PIN, HX711_SCK_PIN);
-  scale.set_scale(calibrationFactor);
-  scale.tare();  // Reset the scale to 0
-  Serial.println("Load cell initialized and tared");
+  Serial.println("Load cell initialized");
+
+  bool hasCal = loadCalibration();
+  if (FORCE_CALIBRATION_ON_BOOT || !hasCal) {
+    runCalibration();
+  }
 
   NimBLEDevice::init("ESP32-C6");
 
@@ -104,15 +195,14 @@ void loop() {
     return;
   }
 
-  // Get weight in kg
-  float weightKg = scale.get_units(1) / 1000.0;
+  // Read raw data and compute calibrated weight
+  long raw = scale.read();
+  float weightKg = (raw - calOffset) * calScale;
 
-  // Only transmit when the reading changes
-  static float lastSentWeight = NAN;
-  bool readingChanged = isnan(lastSentWeight) || weightKg != lastSentWeight;
-
-  if (deviceConnected && readingChanged) {
-    lastSentWeight = weightKg;
+  // Only transmit when the raw reading changes
+  static long lastRaw = LONG_MIN;
+  if (deviceConnected && raw != lastRaw) {
+    lastRaw = raw;
 
     // Send weight to webapp
     String data = String(weightKg, 2) + " kg\n";
