@@ -1,0 +1,46 @@
+<svg width="860" height="240" viewBox="0 0 860 240" fill="none" xmlns="http://www.w3.org/2000/svg" font-family="Inter, system-ui, -apple-system, sans-serif">
+  <defs>
+    <linearGradient id="crimp" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#ef4444"/>
+      <stop offset="40%" stop-color="#f59e0b"/>
+      <stop offset="70%" stop-color="#ec4899"/>
+      <stop offset="100%" stop-color="#ef4444"/>
+    </linearGradient>
+    <linearGradient id="er" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#f59e0b"/>
+      <stop offset="50%" stop-color="#fde047"/>
+      <stop offset="100%" stop-color="#f59e0b"/>
+    </linearGradient>
+    <linearGradient id="trace" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#f59e0b" stop-opacity="0"/>
+      <stop offset="20%" stop-color="#f59e0b" stop-opacity="0.9"/>
+      <stop offset="60%" stop-color="#ef4444" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#ec4899" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="40%" r="60%">
+      <stop offset="0%" stop-color="#f59e0b" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#0a0e1a" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Card background -->
+  <rect width="860" height="240" rx="20" fill="#0a0e1a"/>
+  <rect width="860" height="240" rx="20" fill="url(#glow)"/>
+  <rect x="0.5" y="0.5" width="859" height="239" rx="19.5" fill="none" stroke="#ffffff" stroke-opacity="0.08"/>
+
+  <!-- PCB trace motif: a microcontroller bus routed across the board -->
+  <path d="M70 64 L150 64 L182 96 L300 96 M560 96 L678 96 L710 64 L790 64
+           M70 176 L150 176 L182 144 L320 144 M540 144 L678 144 L710 176 L790 176"
+        fill="none" stroke="url(#trace)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Trace nodes / solder pads -->
+  <circle cx="182" cy="96" r="4" fill="#f59e0b"/>
+  <circle cx="710" cy="96" r="4" fill="#ef4444"/>
+  <circle cx="182" cy="144" r="4" fill="#f59e0b"/>
+  <circle cx="710" cy="144" r="4" fill="#ec4899"/>
+
+  <!-- Wordmark (two-tone warm, matching the web app) -->
+  <text x="430" y="150" text-anchor="middle" font-size="76" font-weight="900" letter-spacing="-2"><tspan fill="url(#crimp)">crimp-</tspan><tspan fill="url(#er)">ER</tspan></text>
+
+  <!-- Tagline -->
+  <text x="430" y="196" text-anchor="middle" font-size="19" font-weight="600" letter-spacing="5" fill="#94a3b8">E S P 3 2 - C 6 &#160;&#183;&#160; F I R M W A R E</text>
+</svg>
