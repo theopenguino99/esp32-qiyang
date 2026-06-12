@@ -1,3 +1,13 @@
+<div align="center">
+
+<img src="assets/banner.svg" alt="crimp-ER — ESP32-C6 Firmware" width="640" />
+
+**On-device firmware for the crimp-ER hangboard scale — ESP32-C6, HX711 load cell, OLED readout &amp; live force streaming over BLE.**
+
+</div>
+
+---
+
 # ESP32-C6 Smart Load Cell
 
 Firmware for an ESP32-C6 based digital scale. Reads an HX711 load cell, shows live
