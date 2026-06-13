@@ -34,7 +34,6 @@
 // Calibration
 #define CALIB_WEIGHT_KG   10.0f  // default reference weight; user-selectable at calibration
 #define CALIB_SAMPLES     10
-#define CALIB_PROMPT_MS   5000   // boot window to press BTN1
 #define CALIB_COUNTDOWN_S 30     // seconds to place known weight
 #define DEBOUNCE_MS       50
 
@@ -144,19 +143,15 @@ void drawTitleBar(const char* title) {
   drawHRule(9);
 }
 
-// Boot-time calibration prompt with live countdown
-void showCalibPrompt(int secsLeft) {
+// Boot-time calibration prompt (waits for BTN2=calibrate / BTN1=skip)
+void showCalibPrompt() {
   display.clearDisplay();
   drawTitleBar("CALIBRATE?");
   display.setTextSize(1);
-  display.setCursor(4, 16);
+  display.setCursor(4, 20);
   display.println("BTN2: calibrate");
-  display.setCursor(4, 28);
+  display.setCursor(4, 36);
   display.println("BTN1: skip");
-  display.setCursor(4, 48);
-  display.print("Auto-skip in ");
-  display.print(secsLeft);
-  display.print("s");
   display.display();
 }
 
@@ -243,7 +238,7 @@ void showCalWeightSelect(float w) {
 }
 
 void selectCalibWeight() {
-  static const float presets[] = {1.25f, 2.5f, 5.0f, 10.0f, 15.0f, 20.0f, 25.0f};
+  static const float presets[] = {1.25f, 2.5f, 5.0f, 8.0f, 10.0f, 15.0f, 20.0f, 25.0f};
   const int n = sizeof(presets) / sizeof(presets[0]);
   // Start at the preset closest to the last-used weight.
   int idx = 0;
@@ -395,18 +390,16 @@ void setup() {
 
   bool hasCal = loadCalibration();
 
-  // ── Calibration prompt window ──
-  unsigned long promptStart = millis();
+  // ── Calibration prompt — wait (no time limit) for the user to choose ──
+  showCalibPrompt();
   bool doCalib = false;
-  while (millis() - promptStart < CALIB_PROMPT_MS) {
-    int secsLeft = CALIB_PROMPT_MS / 1000 - (int)((millis() - promptStart) / 1000UL);
-    showCalibPrompt(max(secsLeft, 1));
+  while (true) {
     if (buttonPressed(BUTTON2_PIN)) {     // BTN2 = calibrate
       waitButtonRelease(BUTTON2_PIN);
       doCalib = true;
       break;
     }
-    if (buttonPressed(BUTTON1_PIN)) {     // BTN1 = skip now
+    if (buttonPressed(BUTTON1_PIN)) {     // BTN1 = skip
       waitButtonRelease(BUTTON1_PIN);
       break;
     }
