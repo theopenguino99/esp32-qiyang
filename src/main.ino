@@ -15,6 +15,7 @@
 #define HX711_DT_PIN  11
 #define HX711_SCK_PIN 10
 #define BUTTON1_PIN   2
+#define BUTTON2_PIN   3
 
 // OLED — SH1106 1.3" 128×64
 #define OLED_ADDR   0x3C
@@ -31,7 +32,7 @@
 #define NUS_TX_UUID      "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
 
 // Calibration
-#define CALIB_WEIGHT_KG   10.0f
+#define CALIB_WEIGHT_KG   10.0f  // default reference weight; user-selectable at calibration
 #define CALIB_SAMPLES     10
 #define CALIB_PROMPT_MS   5000   // boot window to press BTN1
 #define CALIB_COUNTDOWN_S 30     // seconds to place known weight
@@ -45,6 +46,7 @@ NimBLECharacteristic* pTxChar = nullptr;
 bool deviceConnected = false;
 float calOffset = 0.0f;
 float calScale  = 1.0f;
+float calWeight = CALIB_WEIGHT_KG;  // selected reference weight, persisted to flash
 
 // History ring-buffer for the normal-operation graph
 float    history[OLED_WIDTH] = {};
@@ -76,16 +78,16 @@ class RxCallbacks : public NimBLECharacteristicCallbacks {
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-bool buttonPressed() {
-  if (digitalRead(BUTTON1_PIN) == LOW) {
+bool buttonPressed(int pin = BUTTON1_PIN) {
+  if (digitalRead(pin) == LOW) {
     delay(DEBOUNCE_MS);
-    return digitalRead(BUTTON1_PIN) == LOW;
+    return digitalRead(pin) == LOW;
   }
   return false;
 }
 
-void waitButtonRelease() {
-  while (digitalRead(BUTTON1_PIN) == LOW) delay(10);
+void waitButtonRelease(int pin = BUTTON1_PIN) {
+  while (digitalRead(pin) == LOW) delay(10);
   delay(DEBOUNCE_MS);
 }
 
@@ -113,6 +115,7 @@ bool loadCalibration() {
     calOffset = prefs.getFloat("offset", 0.0f);
     calScale  = prefs.getFloat("scale",  1.0f);
   }
+  calWeight = prefs.getFloat("calwt", CALIB_WEIGHT_KG);  // last-used weight (default 10 kg)
   prefs.end();
   return ok;
 }
@@ -121,6 +124,7 @@ void saveCalibration() {
   prefs.begin("hx711", false);
   prefs.putFloat("offset", calOffset);
   prefs.putFloat("scale",  calScale);
+  prefs.putFloat("calwt",  calWeight);
   prefs.end();
 }
 
@@ -145,14 +149,14 @@ void showCalibPrompt(int secsLeft) {
   display.clearDisplay();
   drawTitleBar("CALIBRATE?");
   display.setTextSize(1);
-  display.setCursor(4, 14);
-  display.println("Press BTN1 to");
-  display.println(" calibrate the");
-  display.println(" load cell.");
-  display.println();
-  display.print(" Skip in ");
+  display.setCursor(4, 16);
+  display.println("BTN2: calibrate");
+  display.setCursor(4, 28);
+  display.println("BTN1: skip");
+  display.setCursor(4, 48);
+  display.print("Auto-skip in ");
   display.print(secsLeft);
-  display.print("s...");
+  display.print("s");
   display.display();
 }
 
@@ -185,7 +189,7 @@ void showCountdown(int secsLeft) {
   // Hint and progress bar
   display.setTextSize(1);
   display.setCursor(4, 47);
-  display.print("BTN1 = confirm now");
+  display.print("BTN2 = confirm now");
   int barW = map(secsLeft, 0, CALIB_COUNTDOWN_S, 0, OLED_WIDTH - 2);
   display.drawRect(0, 57, OLED_WIDTH, 7, SH110X_WHITE);
   display.fillRect(1, 58, barW, 5, SH110X_WHITE);
@@ -202,7 +206,9 @@ void showCalibResult(bool ok) {
     display.setCursor(4, 16);
     display.println("Calibration saved.");
     display.setCursor(4, 28);
-    display.print("10kg factor:");
+    char wbuf[20];
+    snprintf(wbuf, sizeof(wbuf), "%g kg factor:", calWeight);
+    display.print(wbuf);
     display.setCursor(4, 38);
     display.print(calScale, 5);
   } else {
@@ -218,9 +224,56 @@ void showCalibResult(bool ok) {
   delay(3000);
 }
 
+// ─── Calibration-weight chooser ──────────────────────────────────────────────
+// Standard kg gym-plate presets. BTN1 cycles, BTN2 confirms.
+void showCalWeightSelect(float w) {
+  display.clearDisplay();
+  drawTitleBar("SET CAL WEIGHT");
+  char buf[16];
+  snprintf(buf, sizeof(buf), "%g kg", w);
+  display.setTextSize(2);
+  int16_t bx, by; uint16_t bw, bh;
+  display.getTextBounds(buf, 0, 0, &bx, &by, &bw, &bh);
+  display.setCursor((OLED_WIDTH - (int)bw) / 2, 24);
+  display.print(buf);
+  display.setTextSize(1);
+  display.setCursor(4, 54);
+  display.print("BTN1:change  BTN2:OK");
+  display.display();
+}
+
+void selectCalibWeight() {
+  static const float presets[] = {1.25f, 2.5f, 5.0f, 10.0f, 15.0f, 20.0f, 25.0f};
+  const int n = sizeof(presets) / sizeof(presets[0]);
+  // Start at the preset closest to the last-used weight.
+  int idx = 0;
+  for (int i = 1; i < n; i++) {
+    if (fabsf(presets[i] - calWeight) < fabsf(presets[idx] - calWeight)) idx = i;
+  }
+  waitButtonRelease(BUTTON2_PIN);   // clear the press that entered calibration
+  showCalWeightSelect(presets[idx]);
+  while (true) {
+    if (buttonPressed(BUTTON1_PIN)) {        // cycle to next preset
+      idx = (idx + 1) % n;
+      showCalWeightSelect(presets[idx]);
+      waitButtonRelease(BUTTON1_PIN);
+    }
+    if (buttonPressed(BUTTON2_PIN)) {        // confirm
+      waitButtonRelease(BUTTON2_PIN);
+      break;
+    }
+    delay(20);
+  }
+  calWeight = presets[idx];
+  Serial.print("[CAL] weight selected="); Serial.println(calWeight, 2);
+}
+
 // ─── Calibration flow ────────────────────────────────────────────────────────
 void runCalibration() {
   Serial.println("[CAL] start");
+
+  // Step 0 — user picks the reference weight (BTN1 cycles, BTN2 confirms)
+  selectCalibWeight();
 
   // Step 1 — zero offset (scale must be empty)
   showInfo("CALIBRATING", "Reading zero...", "Keep scale empty!", nullptr);
@@ -229,11 +282,13 @@ void runCalibration() {
   calOffset = readRawAverage(CALIB_SAMPLES);
   Serial.print("[CAL] offset="); Serial.println(calOffset, 2);
 
-  // Step 2 — countdown for user to place known weight
-  showInfo("PLACE WEIGHT", "Put 10 kg on scale.", "30s countdown starts.", "BTN1 = confirm early");
+  // Step 2 — countdown for user to place the selected weight
+  char placeLine[24];
+  snprintf(placeLine, sizeof(placeLine), "Put %g kg on scale.", calWeight);
+  showInfo("PLACE WEIGHT", placeLine, "30s countdown starts.", "BTN2 = confirm early");
   beepCount(2);
   delay(2000);
-  waitButtonRelease(); // clear any residual press from the trigger
+  waitButtonRelease(BUTTON2_PIN); // clear any residual press from the trigger
 
   unsigned long countStart  = millis();
   const unsigned long total = (unsigned long)CALIB_COUNTDOWN_S * 1000UL;
@@ -241,8 +296,8 @@ void runCalibration() {
   while (millis() - countStart < total) {
     int secsLeft = CALIB_COUNTDOWN_S - (int)((millis() - countStart) / 1000UL);
     showCountdown(max(secsLeft, 0));
-    if (buttonPressed()) {
-      waitButtonRelease();
+    if (buttonPressed(BUTTON2_PIN)) {
+      waitButtonRelease(BUTTON2_PIN);
       Serial.println("[CAL] countdown skipped");
       break;
     }
@@ -262,7 +317,7 @@ void runCalibration() {
     return;
   }
 
-  calScale = CALIB_WEIGHT_KG / delta;
+  calScale = calWeight / delta;
   saveCalibration();
   Serial.print("[CAL] scale="); Serial.println(calScale, 6);
   showCalibResult(true);
@@ -315,6 +370,7 @@ void updateDisplay(float weightKg) {
 // ─── Setup ───────────────────────────────────────────────────────────────────
 void setup() {
   pinMode(BUTTON1_PIN, INPUT_PULLUP);
+  pinMode(BUTTON2_PIN, INPUT_PULLUP);
   pinMode(BUZZER_PIN, OUTPUT);
 
   led.begin();
@@ -345,9 +401,13 @@ void setup() {
   while (millis() - promptStart < CALIB_PROMPT_MS) {
     int secsLeft = CALIB_PROMPT_MS / 1000 - (int)((millis() - promptStart) / 1000UL);
     showCalibPrompt(max(secsLeft, 1));
-    if (buttonPressed()) {
-      waitButtonRelease();
+    if (buttonPressed(BUTTON2_PIN)) {     // BTN2 = calibrate
+      waitButtonRelease(BUTTON2_PIN);
       doCalib = true;
+      break;
+    }
+    if (buttonPressed(BUTTON1_PIN)) {     // BTN1 = skip now
+      waitButtonRelease(BUTTON1_PIN);
       break;
     }
     delay(50);
@@ -368,7 +428,7 @@ void setup() {
     Serial.println("[BOOT] no calibration saved — using defaults");
     calOffset = 0.0f;
     calScale  = 1.0f;
-    showInfo("NO CALIBRATION", "Using defaults.", "Reboot & press BTN1", "to calibrate.");
+    showInfo("NO CALIBRATION", "Using defaults.", "Reboot & press BTN2", "to calibrate.");
     delay(3000);
   }
 
