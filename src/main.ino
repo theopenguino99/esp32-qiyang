@@ -449,7 +449,16 @@ void setup() {
 
   if (doCalib) {
     runCalibration();
-  } else if (!hasCal) {
+  } else if (hasCal) {
+    // Boot tare — refresh only the zero offset from the (empty) scale, in memory
+    // only. The saved scale factor and offset in flash are left untouched, so the
+    // previous calibration is preserved; this just cancels power-on zero drift.
+    // Assumes the scale is empty at boot.
+    showInfo("TARING", "Zeroing scale...", "Keep scale empty!", nullptr);
+    delay(800);  // let the user clear the scale / readings settle
+    calOffset = readRawAverage(CALIB_SAMPLES);
+    Serial.print("[CAL] boot tare offset="); Serial.println(calOffset, 2);
+  } else {
     Serial.println("[BOOT] no calibration saved — using defaults");
     calOffset = 0.0f;
     calScale  = 1.0f;
