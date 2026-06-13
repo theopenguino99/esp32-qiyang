@@ -25,10 +25,28 @@
 #define OLED_SCL    7
 #define OLED_UPDATE_MS 50   // 50ms refresh (cherry-picked from oled-display)
 
-// BLE (Nordic UART Service)
+// BLE (Nordic UART Service) — kept for the web app
 #define NUS_SERVICE_UUID "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
 #define NUS_RX_UUID      "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
 #define NUS_TX_UUID      "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
+
+// Tindeq Progressor BLE protocol — lets the official Tindeq app connect.
+// All multi-byte values are little-endian (ESP32 native), so float/uint32 can
+// be memcpy'd straight into the packet.
+#define TINDEQ_SERVICE_UUID "7e4e1701-1ea6-40c9-9dcc-13d34ffead57"
+#define TINDEQ_DATA_UUID    "7e4e1702-1ea6-40c9-9dcc-13d34ffead57" // notify: device -> app
+#define TINDEQ_CTRL_UUID    "7e4e1703-1ea6-40c9-9dcc-13d34ffead57" // write:  app -> device
+// Control-point command opcodes (app -> device)
+#define TINDEQ_CMD_TARE        100
+#define TINDEQ_CMD_START_MEAS  101
+#define TINDEQ_CMD_STOP_MEAS   102
+#define TINDEQ_CMD_GET_APP_VER 107
+#define TINDEQ_CMD_ENTER_SLEEP 110
+#define TINDEQ_CMD_GET_BATT    111
+// Notification response codes (device -> app)
+#define TINDEQ_RES_CMD     0x00  // command response (battery / version / ...)
+#define TINDEQ_RES_WEIGHT  0x01  // weight sample: float32 kg + uint32 timestamp_us
+#define TINDEQ_BATTERY_MV  3700  // placeholder — no battery monitor wired on this board
 
 // Calibration
 #define CALIB_WEIGHT_KG   10.0f
@@ -42,9 +60,15 @@ Adafruit_SH1106G  display(OLED_WIDTH, OLED_HEIGHT, &Wire, OLED_RESET);
 HX711 scale;
 Preferences prefs;
 NimBLECharacteristic* pTxChar = nullptr;
+NimBLECharacteristic* pTindeqData = nullptr;
 bool deviceConnected = false;
 float calOffset = 0.0f;
 float calScale  = 1.0f;
+
+// Tindeq measurement state
+bool          tindeqMeasuring   = false;  // streaming between START(101)/STOP(102)
+bool          tindeqTareReq     = false;  // TARE(100) requested from app, serviced in loop()
+unsigned long measureStartMicros = 0;     // micros() at START, for the sample timestamp
 
 // History ring-buffer for the normal-operation graph
 float    history[OLED_WIDTH] = {};
@@ -72,6 +96,76 @@ class RxCallbacks : public NimBLECharacteristicCallbacks {
     String reply = "Echo: " + String(val.c_str());
     pTxChar->setValue(reply.c_str());
     pTxChar->notify();
+  }
+};
+
+// ─── Tindeq Progressor notifications ─────────────────────────────────────────
+// Packet layout: [response_code][payload_len][payload...]
+// A weight sample payload is one 8-byte pair: float32 kg + uint32 timestamp_us.
+void tindeqNotifyWeight(float kg, uint32_t tsMicros) {
+  if (!pTindeqData) return;
+  uint8_t pkt[10];
+  pkt[0] = TINDEQ_RES_WEIGHT;
+  pkt[1] = 8;                       // one sample
+  memcpy(&pkt[2], &kg, 4);          // float32, little-endian
+  memcpy(&pkt[6], &tsMicros, 4);    // uint32,  little-endian
+  pTindeqData->setValue(pkt, sizeof(pkt));
+  pTindeqData->notify();
+}
+
+// Command response (e.g. battery voltage, version string)
+void tindeqNotifyCmdResponse(const uint8_t* payload, uint8_t len) {
+  if (!pTindeqData) return;
+  uint8_t pkt[24];
+  if (len > sizeof(pkt) - 2) len = sizeof(pkt) - 2;
+  pkt[0] = TINDEQ_RES_CMD;
+  pkt[1] = len;
+  memcpy(&pkt[2], payload, len);
+  pTindeqData->setValue(pkt, len + 2);
+  pTindeqData->notify();
+}
+
+// Control-point writes from the Tindeq app. Keep this non-blocking: heavy work
+// (tare averaging) is deferred to loop() via a flag.
+class TindeqCtrlCallbacks : public NimBLECharacteristicCallbacks {
+  void onWrite(NimBLECharacteristic* pChar, NimBLEConnInfo& connInfo) override {
+    std::string v = pChar->getValue();
+    if (v.empty()) return;
+    uint8_t op = (uint8_t)v[0];     // opcode is the first byte (TLV; args ignored)
+    switch (op) {
+      case TINDEQ_CMD_TARE:
+        tindeqTareReq = true;
+        Serial.println("[TQ] tare");
+        break;
+      case TINDEQ_CMD_START_MEAS:
+        measureStartMicros = micros();
+        tindeqMeasuring = true;
+        Serial.println("[TQ] start measurement");
+        break;
+      case TINDEQ_CMD_STOP_MEAS:
+        tindeqMeasuring = false;
+        Serial.println("[TQ] stop measurement");
+        break;
+      case TINDEQ_CMD_GET_BATT: {
+        uint32_t mv = TINDEQ_BATTERY_MV;
+        tindeqNotifyCmdResponse((uint8_t*)&mv, 4);
+        Serial.println("[TQ] battery query");
+        break;
+      }
+      case TINDEQ_CMD_GET_APP_VER: {
+        const char* ver = "1.0.0";
+        tindeqNotifyCmdResponse((const uint8_t*)ver, strlen(ver));
+        Serial.println("[TQ] version query");
+        break;
+      }
+      case TINDEQ_CMD_ENTER_SLEEP:
+        tindeqMeasuring = false;
+        Serial.println("[TQ] sleep (ignored)");
+        break;
+      default:
+        Serial.printf("[TQ] unhandled opcode %u\n", op);
+        break;
+    }
   }
 };
 
@@ -364,7 +458,12 @@ void setup() {
   }
 
   // ── BLE setup ──
-  NimBLEDevice::init("ESP32-C6");
+  // Advertise as a Tindeq Progressor ("Progressor_XXXX") so the Tindeq app
+  // discovers it. XXXX is derived from the chip MAC for a stable unique name.
+  char devName[20];
+  uint16_t devId = (uint16_t)(ESP.getEfuseMac() & 0xFFFF);
+  snprintf(devName, sizeof(devName), "Progressor_%04X", devId);
+  NimBLEDevice::init(devName);
   NimBLEServer* pServer = NimBLEDevice::createServer();
   pServer->setCallbacks(new ServerCallbacks());
   NimBLEService* pService = pServer->createService(NUS_SERVICE_UUID);
@@ -375,14 +474,25 @@ void setup() {
   pRxChar->setCallbacks(new RxCallbacks());
   pService->start();
 
+  // Tindeq Progressor service (runs in parallel with NUS)
+  NimBLEService* pTindeqSvc = pServer->createService(TINDEQ_SERVICE_UUID);
+  pTindeqData = pTindeqSvc->createCharacteristic(TINDEQ_DATA_UUID, NIMBLE_PROPERTY::NOTIFY);
+  NimBLECharacteristic* pTindeqCtrl = pTindeqSvc->createCharacteristic(
+    TINDEQ_CTRL_UUID, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR
+  );
+  pTindeqCtrl->setCallbacks(new TindeqCtrlCallbacks());
+  pTindeqSvc->start();
+
   NimBLEAdvertising* pAdv = NimBLEDevice::getAdvertising();
-  pAdv->addServiceUUID(NUS_SERVICE_UUID);
+  // Advertise the Tindeq service UUID so the app filters us in (one 128-bit
+  // UUID fills the adv packet; the name rides in the scan response).
+  pAdv->addServiceUUID(TINDEQ_SERVICE_UUID);
   pAdv->enableScanResponse(true);
-  pAdv->setName("ESP32-C6");
+  pAdv->setName(devName);
   pAdv->setMinInterval(0x20);
   pAdv->setMaxInterval(0x40);
   pAdv->start();
-  Serial.println("[BOOT] advertising as 'ESP32-C6'");
+  Serial.printf("[BOOT] advertising as '%s' (Tindeq Progressor + NUS)\n", devName);
 }
 
 // ─── Loop ────────────────────────────────────────────────────────────────────
@@ -393,6 +503,19 @@ void loop() {
   float weightKg = (raw - calOffset) * calScale;
 
   updateDisplay(weightKg);
+
+  // ── Tindeq Progressor ──
+  // Soft tare (re-zero) requested by the app — in-memory only, not persisted to
+  // flash, so the saved 10 kg calibration scale factor is preserved.
+  if (tindeqTareReq) {
+    calOffset = readRawAverage(CALIB_SAMPLES);
+    tindeqTareReq = false;
+    Serial.println("[TQ] tared");
+  }
+  // Stream weight samples while a measurement is active.
+  if (tindeqMeasuring) {
+    tindeqNotifyWeight(weightKg, (uint32_t)(micros() - measureStartMicros));
+  }
 
   static long lastRaw = LONG_MIN;
   if (deviceConnected && raw != lastRaw) {

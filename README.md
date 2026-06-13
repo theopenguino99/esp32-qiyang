@@ -12,7 +12,8 @@
 
 Firmware for an ESP32-C6 based digital scale. Reads an HX711 load cell, shows live
 weight on a 1.3" OLED, streams readings over BLE, and supports on-device
-calibration with a push button.
+calibration with a push button. It speaks the **Tindeq Progressor** BLE protocol,
+so it works with the official Tindeq app as well as the companion web app.
 
 ## Hardware
 
@@ -47,12 +48,30 @@ calibration with a push button.
 - The RGB LED flashes red while no BLE client is connected.
 - Each changed reading is streamed over BLE as `"<weight> kg\n"`.
 
-## BLE (Nordic UART Service)
+## BLE
 
-- Device name: `ESP32-C6`
-- Service: `6E400001-B5A3-F393-E0A9-E50E24DCCA9E`
-- RX (phone → ESP32): `6E400002-…`
-- TX (ESP32 → phone): `6E400003-…`
+The device advertises as **`Progressor_XXXX`** (`XXXX` derived from the chip MAC)
+and exposes two services in parallel.
+
+### Tindeq Progressor (works with the Tindeq app)
+
+Emulates the Tindeq Progressor so the official **Tindeq app** can connect.
+
+- Service: `7e4e1701-1ea6-40c9-9dcc-13d34ffead57`
+- Data — notify, device → app: `7e4e1702-…`
+- Control — write, app → device: `7e4e1703-…`
+- **Weight stream** (little-endian): `[0x01][8][float32 kg][uint32 timestamp_µs]`,
+  sent only between *start* and *stop*.
+- **Commands:** tare `100`, start `101`, stop `102`, get app version `107`,
+  get battery `111`. Tare is a soft, non-persisted re-zero (keeps the saved
+  calibration factor).
+
+### Nordic UART Service (web app)
+
+- Service: `6E400001-…`, RX `6E400002-…`, TX `6E400003-…`
+- Plain-text TX `"<weight> kg\n"`. Still running, so the companion web app works
+  with no changes — it picks devices with `acceptAllDevices`, so the device simply
+  shows up as `Progressor_XXXX` (instead of `ESP32-C6`) in the Bluetooth chooser.
 
 A companion web app lives at `../esp32-qiyang-webapp`.
 

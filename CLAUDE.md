@@ -5,8 +5,10 @@ Guidance for Claude Code when working in this repository.
 ## What this is
 
 ESP32-C6 (DevKitC-1) firmware for a smart digital scale: HX711 load cell + SH1106
-OLED + BLE UART + on-device button calibration. Single-file Arduino sketch built
-with PlatformIO (pioarduino platform for C6 support).
+OLED + BLE + on-device button calibration. It exposes two BLE services in
+parallel: a **Tindeq Progressor** emulation (for the official Tindeq app) and the
+**Nordic UART Service** (for the web app). Single-file Arduino sketch built with
+PlatformIO (pioarduino platform for C6 support).
 
 All firmware lives in **`src/main.ino`**. There is no `.cpp`/`.h` split — keep new
 code in that file unless asked otherwise.
@@ -36,16 +38,20 @@ it's reserved for future use.
 
 ## Code structure in main.ino (top → bottom)
 
-1. `#define`s — pins, OLED, BLE UUIDs, calibration tunables (`CALIB_*`).
-2. Globals — `led`, `display`, `scale`, `prefs`, BLE char, `calOffset`/`calScale`,
-   history ring buffer.
+1. `#define`s — pins, OLED, BLE UUIDs (NUS + `TINDEQ_*`), calibration tunables
+   (`CALIB_*`).
+2. Globals — `led`, `display`, `scale`, `prefs`, BLE chars, `calOffset`/`calScale`,
+   Tindeq state (`tindeqMeasuring`/`tindeqTareReq`/`measureStartMicros`), history
+   ring buffer.
 3. BLE callbacks (`ServerCallbacks`, `RxCallbacks`).
-4. Helpers — button debounce, beeps, `readRawAverage`, calibration load/save.
-5. OLED screens — `drawTitleBar`, `showCalibPrompt`, `showInfo`, `showCountdown`,
+4. Tindeq protocol — `tindeqNotifyWeight`, `tindeqNotifyCmdResponse`,
+   `TindeqCtrlCallbacks` (parses control-point opcodes).
+5. Helpers — button debounce, beeps, `readRawAverage`, calibration load/save.
+6. OLED screens — `drawTitleBar`, `showCalibPrompt`, `showInfo`, `showCountdown`,
    `showCalibResult`.
-6. `runCalibration()` — the boot calibration flow.
-7. `updateDisplay()` + history helpers — normal-operation screen.
-8. `setup()` / `loop()`.
+7. `runCalibration()` — the boot calibration flow.
+8. `updateDisplay()` + history helpers — normal-operation screen.
+9. `setup()` / `loop()`.
 
 ## Key conventions
 
@@ -56,9 +62,18 @@ it's reserved for future use.
   the existing `buttonPressed()` / `waitButtonRelease()` helpers.
 - **OLED:** 128×64 SH1106 via `Adafruit_SH110X`. Colours are `SH110X_WHITE`.
   Title screens use `drawTitleBar()`; keep new screens consistent with it.
-- **BLE TX format:** plain text `"<weight> kg\n"`, sent only when the raw reading
+- **NUS TX format:** plain text `"<weight> kg\n"`, sent only when the raw reading
   changes. The web app at `../esp32-qiyang-webapp` parses this.
-- Serial logs are tagged: `[BOOT]`, `[CAL]`, `[BLE]`, `[TX]`.
+- **Tindeq protocol:** packets are `[response_code][len][payload]`, little-endian
+  (ESP32-native, so `memcpy` floats/uint32 straight in). Weight sample payload =
+  `float32 kg` + `uint32 timestamp_µs`. Weight streams only between START (101) and
+  STOP (102); see the `TINDEQ_*` opcode defines. Keep `TindeqCtrlCallbacks::onWrite`
+  non-blocking — defer heavy work to `loop()` via a flag (as `tindeqTareReq` does).
+- **Device advertises as `Progressor_XXXX`** (MAC-derived) and advertises the Tindeq
+  service UUID; the name rides in the scan response. The web app is unaffected — it
+  picks devices with `acceptAllDevices` and accesses NUS via `optionalServices`, so
+  it works regardless of the name or which UUID is advertised (NUS still runs).
+- Serial logs are tagged: `[BOOT]`, `[CAL]`, `[BLE]`, `[TX]`, `[TQ]` (Tindeq).
 
 ## Critical build flags (platformio.ini — do not remove)
 
@@ -78,3 +93,9 @@ committing; only commit/push when asked.
   runs only at boot before BLE starts. Don't add blocking delays to `loop()`.
 - The history graph buffer is `OLED_WIDTH` (128) floats; index wraps via modulo.
 - HX711 raw reads block on `is_ready()`; guard with `delay()` not tight spins.
+- **Tindeq tare** (`TINDEQ_CMD_TARE`) re-zeros `calOffset` in memory only — it is
+  deliberately *not* saved, so the persisted 10 kg scale factor survives.
+- **Tindeq sample rate = HX711 rate** (~10 Hz unless the RATE pin selects 80 Hz);
+  RFD-style metrics will be coarser than a real Progressor.
+- **Battery voltage is a placeholder** (`TINDEQ_BATTERY_MV`) — no battery monitor is
+  wired on the DevKit.
