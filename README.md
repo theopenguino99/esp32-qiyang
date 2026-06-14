@@ -13,7 +13,11 @@
 Firmware for an ESP32-C6 based digital scale. Reads an HX711 load cell, shows live
 weight on a 1.3" OLED, streams readings over BLE, and supports on-device
 calibration with 2 push buttons. It speaks the **Tindeq Progressor** BLE protocol,
-so it works with the official Tindeq app as well as the companion web app.
+so it works with the official Tindeq app as well as the companion web app. I initially wanted to create an IOS app but realised I have to pay a premium to enroll in the Apple Developer Program in order to make the app public, so I made a web app instead which is free. My motivation for creating this project was to practice my software and hardware skills, and to build a useful tool for climbers. My gripe about the tindeq progressor is that it is quite expensive for what essentially is just a load cell so I decided to make one of my own and learn some skills along the way. This project was also something to keep me busy while I undergo ACL surgery rehabilitation. 
+
+I would like to thank Yu Jie for helping me 3D print the prototype enclosure. I also want to thank [@SergioGasquez](https://github.com/SergioGasquez) for giving advice to build the device. I took quite a bit of inspiration from his project [Crimpdeq](https://github.com/crimpdeq).
+
+Some important firmware modifications I made was to use a C6 module instead of a C3 rust module because I wanted to learn how to use a C6 for other future projects as it is one of the more powerful boards by espressif. Also I am using the platformio manager and writing the main firmware in arduino code simple for other beginner to intermediate developers. I also added 2 buttons for user friendly calibration if ever the user does not want to use the webapp or tindeq app. Also I implemented an OLED screen to visualise a force graph. Some things that I can potentially do in the future is a flappy bird game displayed on the OLED. These design choices were made with the possibility of further improvement without re-printing the PCB in mind. 
 
 ## Hardware
 
@@ -112,3 +116,14 @@ pio run -t upload      # build + flash
 pio device monitor     # serial @ 115200
 pio run                # build only
 ```
+
+## Licence
+
+This project is dual-licensed by component:
+
+- **Firmware** (`src/`, `include/`) — [MIT](LICENSE).
+- **Hardware** (`hardware/`: PCB, gerbers, enclosure) —
+  [CERN-OHL-S v2](hardware/LICENSE) (Strongly Reciprocal). See
+  [hardware/README.md](hardware/README.md) for the notice.
+
+In both cases please keep the copyright notice and credit theopenguino99.
