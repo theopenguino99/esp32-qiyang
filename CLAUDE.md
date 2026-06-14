@@ -31,35 +31,53 @@ ideally, behaves on hardware. The board may not be connected — don't assume up
 | HX711 DT | 11   | | OLED SDA | 6    |
 | HX711 SCK| 10   | | OLED SCL | 7    |
 | RGB LED  | 8    | | Button 1 | 2    |
-| Buzzer   | 9    | | Button 2 | (reserved, unused) |
+| Buzzer   | 9    | | Button 2 | 3    |
 
-Button 2 exists in hardware (see schematic) but is not wired up in firmware yet —
-it's reserved for future use.
+Both buttons are wired (active-low, `INPUT_PULLUP`): BTN1 (GPIO2) = change/skip,
+BTN2 (GPIO3) = OK/confirm in the boot calibration UI.
+
+## Hardware assets
+
+Board and enclosure design files live in **`hardware/`** (not built by PlatformIO):
+
+- `hardware/pcb_Crimp-ER.kicad_{pro,sch,pcb}` — KiCad project.
+- `hardware/fab/` — gerbers, drill files, pick-and-place, fab zip.
+- `hardware/crimp-ER covers/` — 3D-printed enclosure (`*.stl` + `*.step`).
+- `hardware/renders/` — PNG previews embedded in the README (PCB front/back +
+  cover renders). Regenerate the cover previews from the STLs if the models change.
 
 ## Code structure in main.ino (top → bottom)
 
 1. `#define`s — pins, OLED, BLE UUIDs (NUS + `TINDEQ_*`), calibration tunables
    (`CALIB_*`).
-2. Globals — `led`, `display`, `scale`, `prefs`, BLE chars, `calOffset`/`calScale`,
-   Tindeq state (`tindeqMeasuring`/`tindeqTareReq`/`measureStartMicros`), history
+2. Globals — `led`, `display`, `scale`, `prefs`, BLE chars,
+   `calOffset`/`calScale`/`calWeight`, Tindeq state (`tindeqMeasuring`/`tindeqTareReq`/`measureStartMicros`), history
    ring buffer.
 3. BLE callbacks (`ServerCallbacks`, `RxCallbacks`).
 4. Tindeq protocol — `tindeqNotifyWeight`, `tindeqNotifyCmdResponse`,
    `TindeqCtrlCallbacks` (parses control-point opcodes).
-5. Helpers — button debounce, beeps, `readRawAverage`, calibration load/save.
+5. Helpers — button debounce (`buttonPressed(pin)`), beeps, `readRawAverage`,
+   calibration load/save.
 6. OLED screens — `drawTitleBar`, `showCalibPrompt`, `showInfo`, `showCountdown`,
-   `showCalibResult`.
-7. `runCalibration()` — the boot calibration flow.
+   `showCalibResult`, `showCalWeightSelect`.
+7. `selectCalibWeight()` (weight-preset chooser) + `runCalibration()` — the boot
+   calibration flow.
 8. `updateDisplay()` + history helpers — normal-operation screen.
 9. `setup()` / `loop()`.
 
 ## Key conventions
 
-- **Calibration model:** `weightKg = (raw - calOffset) * calScale`. Offset and
-  scale are persisted to flash via `Preferences` namespace `"hx711"`, keys
-  `"offset"` / `"scale"`. `CALIB_WEIGHT_KG` (10 kg) is the reference mass.
-- **Button is active-low** (`INPUT_PULLUP`); pressed == `LOW`. Always debounce via
-  the existing `buttonPressed()` / `waitButtonRelease()` helpers.
+- **Calibration model:** `weightKg = (raw - calOffset) * calScale`. Offset, scale,
+  and the chosen reference weight are persisted to flash via `Preferences`
+  namespace `"hx711"`, keys `"offset"` / `"scale"` / `"calwt"`. The reference
+  weight is user-selectable at calibration from gym-plate presets (`selectCalibWeight`);
+  `CALIB_WEIGHT_KG` (10 kg) is only the default. `calScale = calWeight / delta`.
+- **Boot flow:** the `CALIBRATE?` prompt waits with no timeout — BTN2 calibrates,
+  BTN1 skips. On skip with a saved calibration, the device does an in-memory boot
+  tare (re-zeros `calOffset` only, not persisted) to cancel power-on drift.
+- **Buttons are active-low** (`INPUT_PULLUP`); pressed == `LOW`. Debounce via
+  `buttonPressed(pin)` / `waitButtonRelease(pin)` (default `BUTTON1_PIN`). UI roles:
+  BTN1 = change/skip, BTN2 = OK/confirm.
 - **OLED:** 128×64 SH1106 via `Adafruit_SH110X`. Colours are `SH110X_WHITE`.
   Title screens use `drawTitleBar()`; keep new screens consistent with it.
 - **NUS TX format:** plain text `"<weight> kg\n"`, sent only when the raw reading
