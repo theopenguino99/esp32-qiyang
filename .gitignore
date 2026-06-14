@@ -7,6 +7,10 @@
 # macOS
 .DS_Store
 
+# Claude Code
+CLAUDE.md
+.claude/
+
 # KiCad
 *-backups/
 *.kicad_prl
