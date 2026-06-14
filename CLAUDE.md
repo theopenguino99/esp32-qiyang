@@ -29,10 +29,20 @@ ideally, behaves on hardware. The board may not be connected — don't assume up
 | HX711 DT | 11   | | OLED SDA | 6    |
 | HX711 SCK| 10   | | OLED SCL | 7    |
 | RGB LED  | 8    | | Button 1 | 2    |
-| Buzzer   | 9    | | Button 2 | (reserved, unused) |
+| Buzzer   | 9    | | Button 2 | 3    |
 
-Button 2 exists in hardware (see schematic) but is not wired up in firmware yet —
-it's reserved for future use.
+Both buttons are wired (active-low, `INPUT_PULLUP`): BTN1 (GPIO2) = change/skip,
+BTN2 (GPIO3) = OK/confirm in the boot calibration UI.
+
+## Hardware assets
+
+Board and enclosure design files live in **`hardware/`** (not built by PlatformIO):
+
+- `hardware/pcb_Crimp-ER.kicad_{pro,sch,pcb}` — KiCad project.
+- `hardware/fab/` — gerbers, drill files, pick-and-place, fab zip.
+- `hardware/crimp-ER covers/` — 3D-printed enclosure (`*.stl` + `*.step`).
+- `hardware/renders/` — PNG previews embedded in the README (PCB front/back +
+  cover renders). Regenerate the cover previews from the STLs if the models change.
 
 ## Code structure in main.ino (top → bottom)
 

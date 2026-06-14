@@ -23,6 +23,31 @@ calibration with a push button.
 | WS2812B RGB LED   | GPIO8 (onboard)                     |
 | Buzzer            | GPIO9                               |
 | Button 1          | GPIO2 (active-low, internal pullup) |
+| Button 2          | GPIO3 (active-low, internal pullup) |
+
+All hardware design files live in [`hardware/`](hardware/) — KiCad project,
+gerbers (`hardware/fab/`), and the 3D-printable enclosure.
+
+### PCB
+
+Custom 2-layer board designed in KiCad ([`hardware/pcb_Crimp-ER.kicad_pcb`](hardware/pcb_Crimp-ER.kicad_pcb)).
+
+| Front | Back | Actual|
+|:-----:|:----:|:-----:|
+| <img src="hardware/renders/pcb_front.png" alt="PCB front" width="340"> | <img src="hardware/renders/pcb_back.png" alt="PCB back" width="340"> | <img src="hardware/renders/jlcpcb.jpeg" alt="PCB actual" width="340"> |
+
+### Enclosure
+
+Two-part 3D-printed case. Models (STL + STEP) live in
+[`hardware/crimp-ER covers/`](hardware/crimp-ER%20covers/).
+
+|Full Assembly| Top cover | Bottom cover |
+|:---------:|:------------:|:-:|
+|<img src="hardware/renders/assembly v16.png" alt="Full Assembly" width="340">| <img src="hardware/renders/top cover_fusion.png" alt="Top cover" width="340"> | <img src="hardware/renders/bottom cover_fusion.png" alt="Bottom cover" width="340"> |
+
+> Print-ready downloads:
+> [top STL](hardware/crimp-ER%20covers/top_cover.stl) ·
+> [bottom STL](hardware/crimp-ER%20covers/bottom_cover.stl).
 
 ## Behaviour
 
