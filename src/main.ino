@@ -16,6 +16,7 @@
 #define HX711_SCK_PIN 10
 #define BUTTON1_PIN   2
 #define BUTTON2_PIN   3
+#define BATT_ADC_PIN  1    // GPIO1 / ADC1_CH1 — battery sense (100k/100k divider, Vbatt = 2*Vadc)
 
 // OLED — SH1106 1.3" 128×64
 #define OLED_ADDR   0x3C
@@ -47,13 +48,18 @@
 // Notification response codes (device -> app)
 #define TINDEQ_RES_CMD     0x00  // command response (battery / version / ...)
 #define TINDEQ_RES_WEIGHT  0x01  // weight sample: float32 kg + uint32 timestamp_us
-#define TINDEQ_BATTERY_MV  3700  // placeholder — no battery monitor wired on this board
 
 // Calibration
 #define CALIB_WEIGHT_KG   10.0f  // default reference weight; user-selectable at calibration
 #define CALIB_SAMPLES     10
 #define CALIB_COUNTDOWN_S 30     // seconds to place known weight
 #define DEBOUNCE_MS       50
+
+// Battery monitor — GPIO1/ADC1_CH1 via a 100k/100k divider (Vbatt = 2 * Vadc)
+#define BATT_FULL_MV   4200   // 1S Li-ion fully charged → 100%
+#define BATT_EMPTY_MV  3300   // ~LDO dropout → 0%
+#define BATT_READ_MS   2000   // sampling cadence
+#define BATT_SAMPLES   8      // ADC reads averaged per update
 
 Adafruit_NeoPixel led(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
 Adafruit_SH1106G  display(OLED_WIDTH, OLED_HEIGHT, &Wire, OLED_RESET);
@@ -70,6 +76,11 @@ float calWeight = CALIB_WEIGHT_KG;  // selected reference weight, persisted to f
 bool          tindeqMeasuring   = false;  // streaming between START(101)/STOP(102)
 bool          tindeqTareReq     = false;  // TARE(100) requested from app, serviced in loop()
 unsigned long measureStartMicros = 0;     // micros() at START, for the sample timestamp
+
+// Battery state (refreshed periodically in loop)
+uint32_t      batteryMv    = BATT_FULL_MV;  // measured battery voltage (mV)
+int           batteryPct   = 100;           // 0..100, derived from batteryMv
+unsigned long lastBattRead  = 0;
 
 // History ring-buffer for the normal-operation graph
 float    history[OLED_WIDTH] = {};
@@ -148,7 +159,7 @@ class TindeqCtrlCallbacks : public NimBLECharacteristicCallbacks {
         Serial.println("[TQ] stop measurement");
         break;
       case TINDEQ_CMD_GET_BATT: {
-        uint32_t mv = TINDEQ_BATTERY_MV;
+        uint32_t mv = batteryMv;   // real measured battery voltage
         tindeqNotifyCmdResponse((uint8_t*)&mv, 4);
         Serial.println("[TQ] battery query");
         break;
@@ -198,6 +209,17 @@ float readRawAverage(int samples) {
     sum += scale.read();
   }
   return (float)sum / samples;
+}
+
+// Sample the battery divider and update batteryMv / batteryPct (throttled).
+void updateBattery() {
+  if (lastBattRead != 0 && millis() - lastBattRead < BATT_READ_MS) return;
+  lastBattRead = millis();
+  uint32_t sum = 0;
+  for (int i = 0; i < BATT_SAMPLES; i++) sum += analogReadMilliVolts(BATT_ADC_PIN);
+  batteryMv = (sum / BATT_SAMPLES) * 2;   // undo the 100k/100k divider
+  long pct = ((long)batteryMv - BATT_EMPTY_MV) * 100 / (BATT_FULL_MV - BATT_EMPTY_MV);
+  batteryPct = constrain((int)pct, 0, 100);
 }
 
 // ─── Calibration storage ─────────────────────────────────────────────────────
@@ -424,6 +446,17 @@ float getHistoryAt(int i) {
   return history[(historyIndex + i) % OLED_WIDTH];
 }
 
+// Small battery glyph at the top-right corner; inner fill ∝ percent.
+void drawBatteryIcon(int pct) {
+  const int w = 16, h = 9;
+  const int x = OLED_WIDTH - w - 3;   // 3px keeps the +terminal nub on-screen
+  const int y = 0;
+  display.drawRect(x, y, w, h, SH110X_WHITE);             // body outline
+  display.fillRect(x + w, y + 3, 2, h - 6, SH110X_WHITE); // + terminal nub
+  int fw = ((w - 2) * pct + 50) / 100;                    // rounded fill width
+  if (fw > 0) display.fillRect(x + 1, y + 1, fw, h - 2, SH110X_WHITE);
+}
+
 void updateDisplay(float weightKg) {
   if (millis() - lastDisplayUpdate < OLED_UPDATE_MS) return;
   lastDisplayUpdate = millis();
@@ -439,10 +472,28 @@ void updateDisplay(float weightKg) {
   if (maxV - minV < 0.05f) maxV = minV + 0.05f;
 
   display.clearDisplay();
-  display.setTextSize(3);
   display.setTextColor(SH110X_WHITE);
-  display.setCursor(0, 0);
-  display.print(weightKg, 2);
+
+  // Battery indicator — top-right, always on.
+  drawBatteryIcon(batteryPct);
+
+  // Weight: integer + point at size 3; the 2 decimals and "kg" at size 2 and
+  // dropped below the battery row, so they fit alongside the icon.
+  char wbuf[12];
+  snprintf(wbuf, sizeof(wbuf), "%.2f", weightKg);   // e.g. "12.34" / "-1.20"
+  char* dotp = strchr(wbuf, '.');
+  int   dot  = dotp ? (int)(dotp - wbuf) : (int)strlen(wbuf);
+  char  big[10];
+  int   bn = (dot + 1 < (int)sizeof(big)) ? dot + 1 : (int)sizeof(big) - 1;
+  memcpy(big, wbuf, bn); big[bn] = '\0';            // integer part incl. the '.'
+
+  display.setTextSize(3);
+  display.setCursor(0, 2);
+  display.print(big);
+  int sx = display.getCursorX();
+  display.setTextSize(2);
+  display.setCursor(sx, 10);                         // y=10 keeps it clear of the icon
+  display.print(dotp ? dotp + 1 : "");               // the 2 decimal digits
   display.print("kg");
 
   const int graphTop = 26, graphBottom = OLED_HEIGHT - 1;
@@ -461,6 +512,11 @@ void setup() {
   pinMode(BUTTON1_PIN, INPUT_PULLUP);
   pinMode(BUTTON2_PIN, INPUT_PULLUP);
   pinMode(BUZZER_PIN, OUTPUT);
+
+  // Battery ADC: 12-bit, 11dB attenuation (full ~0–3.1V range; divided Vbatt ≤ 2.1V)
+  analogReadResolution(12);
+  analogSetPinAttenuation(BATT_ADC_PIN, ADC_11db);
+  updateBattery();   // prime batteryPct before the first display
 
   led.begin();
   led.setBrightness(50);
@@ -564,6 +620,7 @@ void loop() {
   long  raw      = scale.read();
   float weightKg = (raw - calOffset) * calScale;
 
+  updateBattery();
   updateDisplay(weightKg);
 
   // ── Tindeq Progressor ──

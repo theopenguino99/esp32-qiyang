@@ -113,7 +113,7 @@ committing; only commit/push when asked.
 - HX711 raw reads block on `is_ready()`; guard with `delay()` not tight spins.
 - **Tindeq tare** (`TINDEQ_CMD_TARE`) re-zeros `calOffset` in memory only — it is
   deliberately *not* saved, so the persisted 10 kg scale factor survives.
-- **Tindeq sample rate = HX711 rate** (~10 Hz unless the RATE pin selects 80 Hz);
+- **Tindeq sample rate = HX711 rate** (~10 Hz on the devboard but 80 Hz on the production board);
   RFD-style metrics will be coarser than a real Progressor.
 - **Battery voltage is a placeholder** (`TINDEQ_BATTERY_MV`) — no battery monitor is
   wired on the DevKit.
