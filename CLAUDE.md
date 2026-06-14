@@ -47,23 +47,31 @@ Board and enclosure design files live in **`hardware/`** (not built by PlatformI
 ## Code structure in main.ino (top → bottom)
 
 1. `#define`s — pins, OLED, BLE UUIDs, calibration tunables (`CALIB_*`).
-2. Globals — `led`, `display`, `scale`, `prefs`, BLE char, `calOffset`/`calScale`,
-   history ring buffer.
+2. Globals — `led`, `display`, `scale`, `prefs`, BLE char,
+   `calOffset`/`calScale`/`calWeight`, history ring buffer.
 3. BLE callbacks (`ServerCallbacks`, `RxCallbacks`).
-4. Helpers — button debounce, beeps, `readRawAverage`, calibration load/save.
+4. Helpers — button debounce (`buttonPressed(pin)`), beeps, `readRawAverage`,
+   calibration load/save.
 5. OLED screens — `drawTitleBar`, `showCalibPrompt`, `showInfo`, `showCountdown`,
-   `showCalibResult`.
-6. `runCalibration()` — the boot calibration flow.
+   `showCalibResult`, `showCalWeightSelect`.
+6. `selectCalibWeight()` (weight-preset chooser) + `runCalibration()` — the boot
+   calibration flow.
 7. `updateDisplay()` + history helpers — normal-operation screen.
 8. `setup()` / `loop()`.
 
 ## Key conventions
 
-- **Calibration model:** `weightKg = (raw - calOffset) * calScale`. Offset and
-  scale are persisted to flash via `Preferences` namespace `"hx711"`, keys
-  `"offset"` / `"scale"`. `CALIB_WEIGHT_KG` (10 kg) is the reference mass.
-- **Button is active-low** (`INPUT_PULLUP`); pressed == `LOW`. Always debounce via
-  the existing `buttonPressed()` / `waitButtonRelease()` helpers.
+- **Calibration model:** `weightKg = (raw - calOffset) * calScale`. Offset, scale,
+  and the chosen reference weight are persisted to flash via `Preferences`
+  namespace `"hx711"`, keys `"offset"` / `"scale"` / `"calwt"`. The reference
+  weight is user-selectable at calibration from gym-plate presets (`selectCalibWeight`);
+  `CALIB_WEIGHT_KG` (10 kg) is only the default. `calScale = calWeight / delta`.
+- **Boot flow:** the `CALIBRATE?` prompt waits with no timeout — BTN2 calibrates,
+  BTN1 skips. On skip with a saved calibration, the device does an in-memory boot
+  tare (re-zeros `calOffset` only, not persisted) to cancel power-on drift.
+- **Buttons are active-low** (`INPUT_PULLUP`); pressed == `LOW`. Debounce via
+  `buttonPressed(pin)` / `waitButtonRelease(pin)` (default `BUTTON1_PIN`). UI roles:
+  BTN1 = change/skip, BTN2 = OK/confirm.
 - **OLED:** 128×64 SH1106 via `Adafruit_SH110X`. Colours are `SH110X_WHITE`.
   Title screens use `drawTitleBar()`; keep new screens consistent with it.
 - **BLE TX format:** plain text `"<weight> kg\n"`, sent only when the raw reading

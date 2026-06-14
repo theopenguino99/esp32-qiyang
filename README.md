@@ -11,8 +11,8 @@
 # ESP32-C6 Smart Load Cell
 
 Firmware for an ESP32-C6 based digital scale. Reads an HX711 load cell, shows live
-weight on a 1.3" OLED, streams readings over BLE, and supports on-device
-calibration with a push button.
+weight on a 1.3" OLED, streams readings over BLE, and supports on-device,
+two-button calibration with a selectable reference weight.
 
 ## Hardware
 
@@ -21,7 +21,6 @@ calibration with a push button.
 | HX711 load cell   | DT = GPIO11, SCK = GPIO10           |
 | SH1106 OLED (I2C) | SDA = GPIO6, SCL = GPIO7, addr 0x3C |
 | WS2812B RGB LED   | GPIO8 (onboard)                     |
-| Buzzer            | GPIO9                               |
 | Button 1          | GPIO2 (active-low, internal pullup) |
 | Button 2          | GPIO3 (active-low, internal pullup) |
 
@@ -49,22 +48,28 @@ Two-part 3D-printed case. Models (STL + STEP) live in
 > [top STL](hardware/crimp-ER%20covers/top_cover.stl) ·
 > [bottom STL](hardware/crimp-ER%20covers/bottom_cover.stl).
 
-## Behaviour
+Two buttons drive the on-device UI: **Button 1 = change/skip**, **Button 2 =
+OK/confirm**.
 
-**On boot** the OLED shows a `CALIBRATE?` prompt with a 5-second countdown:
+**On boot** the OLED shows a `CALIBRATE?` prompt and waits (no time limit) for a
+choice:
 
-- **Press Button 1** → calibration starts (see below).
-- **Do nothing** → boots normally using the last saved calibration (stored in
-  flash via `Preferences`). If none exists, it warns and runs with defaults.
+- **Button 2** → run calibration (see below).
+- **Button 1** → skip. If a calibration is saved, the device re-zeros the empty
+  scale in memory (a boot tare that cancels power-on drift while keeping the saved
+  scale factor); if none is saved, it warns and runs with defaults.
 
 **Calibration**
 
-1. *Zero* — samples the empty scale to get the offset (keep the scale clear).
-2. *Place weight* — a 30-second countdown appears (large timer + progress bar).
-   Put a **10 kg** reference weight on the scale.
-3. Pressing Button 1 again ends the countdown early and reads immediately.
-4. The scale factor is computed, saved to flash, and a result screen is shown
-   (3 beeps on success, 1 on failure if the reading is invalid).
+1. *Pick the weight* — Button 1 cycles the reference-weight presets
+   (1.25, 2.5, 5, 8, 10, 15, 20, 25 kg), Button 2 confirms. It starts at your
+   last-used weight.
+2. *Zero* — keep the scale empty; it samples the offset.
+3. *Place weight* — a 30-second countdown appears (large timer + progress bar).
+   Put the selected weight on the scale; Button 2 ends the countdown early.
+4. The scale factor is computed and saved to flash (offset, scale, and the chosen
+   weight), then a result screen shows (3 beeps on success, 1 on failure if the
+   reading is invalid).
 
 **Normal operation**
 
