@@ -34,6 +34,31 @@ float readRawAverage(int samples) {
   return (float)sum / samples;
 }
 
+// Running median of the last FILTER_MEDIAN_WINDOW raw counts, then converted to
+// kg with the current calibration. Median rejects impulsive spikes with almost
+// no lag (no smoothing of genuine transients), so it's safe on the RFD stream.
+// Operates on raw counts (offset/scale-independent), so a tare mid-stream is fine.
+float medianFilteredKg(long raw) {
+  static long win[FILTER_MEDIAN_WINDOW];
+  static int  count = 0;
+  static int  head  = 0;
+
+  win[head] = raw;
+  head = (head + 1) % FILTER_MEDIAN_WINDOW;
+  if (count < FILTER_MEDIAN_WINDOW) count++;
+
+  long sorted[FILTER_MEDIAN_WINDOW];
+  for (int i = 0; i < count; i++) sorted[i] = win[i];
+  for (int i = 1; i < count; i++) {        // insertion sort (window is tiny)
+    long key = sorted[i];
+    int  j = i - 1;
+    while (j >= 0 && sorted[j] > key) { sorted[j + 1] = sorted[j]; j--; }
+    sorted[j + 1] = key;
+  }
+  long med = sorted[count / 2];
+  return (med - calOffset) * calScale;
+}
+
 // ─── Calibration-weight chooser ──────────────────────────────────────────────
 // Standard kg gym-plate presets. BTN1 cycles, BTN2 confirms.
 void selectCalibWeight() {

@@ -76,7 +76,7 @@ void loop() {
   if (!scale.is_ready()) { delay(10); return; }
 
   long  raw      = scale.read();
-  float weightKg = (raw - calOffset) * calScale;
+  float weightKg = medianFilteredKg(raw);   // spike-filtered, calibrated (low-lag)
 
   updateBattery();
   updateDisplay(weightKg);

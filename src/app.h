@@ -62,6 +62,13 @@
 #define CALIB_COUNTDOWN_S 30     // seconds to place known weight
 #define DEBOUNCE_MS       50
 
+// ─── Signal filtering ────────────────────────────────────────────────────────
+// Median window rejects impulsive spikes with ~no lag — applied to every consumer
+// (display + BLE), so it won't distort Tindeq RFD. The display EMA is extra
+// smoothing for the OLED readout/graph ONLY; the BLE streams stay unfiltered by it.
+#define FILTER_MEDIAN_WINDOW 3      // odd; raw samples kept for the running median
+#define DISPLAY_EMA_ALPHA    0.2f   // OLED-only smoothing (0..1; higher = snappier, less smooth)
+
 // ─── Battery monitor — GPIO1/ADC1_CH1 via a 100k/100k divider (Vbatt = 2*Vadc) ─
 #define BATT_FULL_MV   4200   // 1S LiPo fully charged (CC/CV terminates at 4.2V) → 100%
 #define BATT_EMPTY_MV  3500   // AP2112K-3.3 brown-out floor (3.3V + ~200mV dropout) → 0%
@@ -95,6 +102,7 @@ void  saveCalibration();
 float readRawAverage(int samples);
 void  selectCalibWeight();   // weight-preset chooser (blocking, boot-only)
 void  runCalibration();      // full boot calibration flow
+float medianFilteredKg(long raw);  // running median of raw counts → calibrated kg (spike rejection)
 
 // ─── OLED screens (ui.cpp) ───────────────────────────────────────────────────
 void showCalibPrompt();

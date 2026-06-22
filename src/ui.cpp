@@ -148,6 +148,15 @@ static void drawBatteryIcon(int pct) {
 void updateDisplay(float weightKg) {
   if (millis() - lastDisplayUpdate < OLED_UPDATE_MS) return;
   lastDisplayUpdate = millis();
+
+  // Extra smoothing for the OLED readout + graph only (the BLE streams already
+  // got the low-lag median in loop() and are not affected by this EMA).
+  static float ema = 0.0f;
+  static bool  emaInit = false;
+  if (!emaInit) { ema = weightKg; emaInit = true; }
+  else          { ema += DISPLAY_EMA_ALPHA * (weightKg - ema); }
+  weightKg = ema;
+
   pushHistory(weightKg);
 
   int count = historyFull ? OLED_WIDTH : (int)historyIndex;
